@@ -109,6 +109,11 @@ class VideoScreenshotGenerator {
     }
 
     loadVideo(file) {
+        if (!file || !file.type.startsWith('video/')) {
+            alert('Пожалуйста, выберите корректный видео файл');
+            return;
+        }
+
         this.currentVideoFile = file;
         this.cleanupScreenshotResources();
 
@@ -117,8 +122,8 @@ class VideoScreenshotGenerator {
             this.currentVideoUrl = null;
         }
 
-        this.currentVideoUrl = URL.createObjectURL(file);
-        this.video.src = this.currentVideoUrl;
+        this.video.srcObject = file;
+        this.video.load();
 
         this.video.addEventListener('loadedmetadata', () => {
             this.showVideoInfo();
@@ -134,26 +139,16 @@ class VideoScreenshotGenerator {
         const videoInfo = this.dom.videoInfo;
         const duration = this.formatTime(this.video.duration);
         const fileSize = this.formatFileSize(this.currentVideoFile.size);
-        
-        videoInfo.innerHTML = `
-            <h4>📹 Информация о видео</h4>
-            <div class="video-info-item">
-                <span>Название:</span>
-                <strong>${this.currentVideoFile.name}</strong>
-            </div>
-            <div class="video-info-item">
-                <span>Длительность:</span>
-                <strong>${duration}</strong>
-            </div>
-            <div class="video-info-item">
-                <span>Разрешение:</span>
-                <strong>${this.video.videoWidth} × ${this.video.videoHeight}</strong>
-            </div>
-            <div class="video-info-item">
-                <span>Размер файла:</span>
-                <strong>${fileSize}</strong>
-            </div>
-        `;
+        videoInfo.textContent = '';
+
+        const title = document.createElement('h4');
+        title.textContent = '📹 Информация о видео';
+        videoInfo.appendChild(title);
+
+        videoInfo.appendChild(this.createVideoInfoItem('Название:', this.currentVideoFile.name));
+        videoInfo.appendChild(this.createVideoInfoItem('Длительность:', duration));
+        videoInfo.appendChild(this.createVideoInfoItem('Разрешение:', `${this.video.videoWidth} × ${this.video.videoHeight}`));
+        videoInfo.appendChild(this.createVideoInfoItem('Размер файла:', fileSize));
     }
 
     showControls() {
@@ -457,6 +452,10 @@ class VideoScreenshotGenerator {
                 this.currentVideoUrl = null;
             }
 
+            if (this.video) {
+                this.video.srcObject = null;
+            }
+
             if (this.video && this.video.src && this.video.src.startsWith('blob:')) {
                 this.video.src = '';
             }
@@ -521,6 +520,21 @@ class VideoScreenshotGenerator {
 
     yieldToMainThread() {
         return new Promise((resolve) => requestAnimationFrame(resolve));
+    }
+
+    createVideoInfoItem(labelText, valueText) {
+        const item = document.createElement('div');
+        item.className = 'video-info-item';
+
+        const label = document.createElement('span');
+        label.textContent = labelText;
+
+        const value = document.createElement('strong');
+        value.textContent = valueText;
+
+        item.appendChild(label);
+        item.appendChild(value);
+        return item;
     }
 
     formatTime(seconds) {
