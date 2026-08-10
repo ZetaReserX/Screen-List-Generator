@@ -1,18 +1,44 @@
 class VideoScreenshotGenerator {
     constructor() {
+        this.dom = {
+            videoInput: document.getElementById('videoInput'),
+            uploadArea: document.getElementById('uploadArea'),
+            frameCount: document.getElementById('frameCount'),
+            frameCountValue: document.getElementById('frameCountValue'),
+            gridWidth: document.getElementById('gridWidth'),
+            gridWidthValue: document.getElementById('gridWidthValue'),
+            columns: document.getElementById('columns'),
+            showTimestamps: document.getElementById('showTimestamps'),
+            generateBtn: document.getElementById('generateBtn'),
+            downloadBtn: document.getElementById('downloadBtn'),
+            resetBtn: document.getElementById('resetBtn'),
+            screenshotGrid: document.getElementById('screenshotGrid'),
+            controlsSection: document.getElementById('controlsSection'),
+            previewSection: document.getElementById('previewSection'),
+            progressSection: document.getElementById('progressSection'),
+            progressFill: document.getElementById('progressFill'),
+            progressText: document.getElementById('progressText'),
+            videoInfo: document.getElementById('videoInfo')
+        };
+
         this.video = document.getElementById('videoElement');
         this.canvas = document.getElementById('canvas');
         this.ctx = this.canvas.getContext('2d');
         this.currentVideoFile = null;
+        this.currentVideoUrl = null;
         this.screenshots = [];
+        this.captureWidth = 0;
+        this.captureHeight = 0;
+        this.lastProgressDisplayed = -1;
+        this.MAX_CAPTURE_WIDTH = 1920;
         
         this.initializeEventListeners();
     }
 
     initializeEventListeners() {
         // Загрузка файла
-        const videoInput = document.getElementById('videoInput');
-        const uploadArea = document.getElementById('uploadArea');
+        const videoInput = this.dom.videoInput;
+        const uploadArea = this.dom.uploadArea;
         
         videoInput.addEventListener('change', (e) => this.handleFileSelect(e));
         
@@ -36,37 +62,36 @@ class VideoScreenshotGenerator {
         });
         
         // Контролы
-        const frameCount = document.getElementById('frameCount');
-        const frameCountValue = document.getElementById('frameCountValue');
+        const frameCount = this.dom.frameCount;
+        const frameCountValue = this.dom.frameCountValue;
         frameCount.addEventListener('input', () => {
             frameCountValue.textContent = frameCount.value;
         });
         
-        const gridWidth = document.getElementById('gridWidth');
-        const gridWidthValue = document.getElementById('gridWidthValue');
+        const gridWidth = this.dom.gridWidth;
+        const gridWidthValue = this.dom.gridWidthValue;
         gridWidth.addEventListener('input', () => {
             gridWidthValue.textContent = gridWidth.value + 'px';
             this.updateGridWidth(gridWidth.value);
         });
         
-        const columns = document.getElementById('columns');
+        const columns = this.dom.columns;
         columns.addEventListener('change', () => {
-            const grid = document.getElementById('screenshotGrid');
-            grid.style.setProperty('--columns', columns.value);
+            this.dom.screenshotGrid.style.setProperty('--columns', columns.value);
         });
         
-        document.getElementById('generateBtn').addEventListener('click', () => {
+        this.dom.generateBtn.addEventListener('click', () => {
             this.generateScreenshots();
         });
         
-        const downloadBtn = document.getElementById('downloadBtn');
+        const downloadBtn = this.dom.downloadBtn;
         if (downloadBtn) {
             downloadBtn.addEventListener('click', () => {
                 this.downloadScreenshots();
             });
         }
         
-        const resetBtn = document.getElementById('resetBtn');
+        const resetBtn = this.dom.resetBtn;
         if (resetBtn) {
             resetBtn.addEventListener('click', () => {
                 this.reset();
@@ -85,21 +110,28 @@ class VideoScreenshotGenerator {
 
     loadVideo(file) {
         this.currentVideoFile = file;
-        const url = URL.createObjectURL(file);
-        
-        this.video.src = url;
+        this.cleanupScreenshotResources();
+
+        if (this.currentVideoUrl) {
+            URL.revokeObjectURL(this.currentVideoUrl);
+            this.currentVideoUrl = null;
+        }
+
+        this.currentVideoUrl = URL.createObjectURL(file);
+        this.video.src = this.currentVideoUrl;
+
         this.video.addEventListener('loadedmetadata', () => {
             this.showVideoInfo();
             this.showControls();
-        });
+        }, { once: true });
         
         this.video.addEventListener('error', () => {
             alert('Ошибка при загрузке видео. Убедитесь, что файл не поврежден.');
-        });
+        }, { once: true });
     }
 
     showVideoInfo() {
-        const videoInfo = document.getElementById('videoInfo');
+        const videoInfo = this.dom.videoInfo;
         const duration = this.formatTime(this.video.duration);
         const fileSize = this.formatFileSize(this.currentVideoFile.size);
         
@@ -125,52 +157,60 @@ class VideoScreenshotGenerator {
     }
 
     showControls() {
-        document.getElementById('controlsSection').style.display = 'block';
-        document.getElementById('uploadArea').style.display = 'none';
+        this.dom.controlsSection.style.display = 'block';
+        this.dom.uploadArea.style.display = 'none';
     }
 
     async generateScreenshots() {
-        const frameCount = parseInt(document.getElementById('frameCount').value);
-        const showTimestamps = document.getElementById('showTimestamps').checked;
-        const columns = document.getElementById('columns').value;
+        const frameCount = parseInt(this.dom.frameCount.value);
+        const showTimestamps = this.dom.showTimestamps.checked;
+        const columns = parseInt(this.dom.columns.value);
         
         // Показать прогресс
         this.showProgress();
         
-        this.screenshots = [];
+        this.cleanupScreenshotResources();
         const duration = this.video.duration;
         const interval = duration / (frameCount + 1);
+        const progressStep = Math.max(1, Math.floor(frameCount / 20));
+        const { width, height } = this.getCaptureDimensions(columns);
+        this.captureWidth = width;
+        this.captureHeight = height;
         
         // Настроить canvas
-        this.canvas.width = this.video.videoWidth;
-        this.canvas.height = this.video.videoHeight;
+        this.canvas.width = this.captureWidth;
+        this.canvas.height = this.captureHeight;
         
         for (let i = 1; i <= frameCount; i++) {
             const time = interval * i;
             
             try {
-                const screenshot = await this.captureFrame(time);
+                const screenshotBlob = await this.captureFrame(time, showTimestamps);
+                const screenshotUrl = URL.createObjectURL(screenshotBlob);
                 this.screenshots.push({
-                    image: screenshot,
+                    blob: screenshotBlob,
+                    url: screenshotUrl,
                     timestamp: time,
                     formattedTime: this.formatTime(time)
                 });
                 
                 // Обновить прогресс
-                this.updateProgress((i / frameCount) * 100);
+                if (i === frameCount || i % progressStep === 0) {
+                    this.updateProgress((i / frameCount) * 100);
+                    await this.yieldToMainThread();
+                }
             } catch (error) {
                 console.error('Ошибка при создании скриншота:', error);
             }
         }
         
         this.hideProgress();
-        this.displayScreenshots(columns, showTimestamps);
+        this.displayScreenshots(columns);
     }
 
-    captureFrame(time) {
+    captureFrame(time, showTimestamps) {
         return new Promise((resolve, reject) => {
             const video = this.video;
-            const showTimestamps = document.getElementById('showTimestamps').checked;
             
             const onSeeked = () => {
                 try {
@@ -225,43 +265,49 @@ class VideoScreenshotGenerator {
                         this.ctx.lineWidth = 1;
                     }
                     
-                    const dataURL = this.canvas.toDataURL('image/jpeg', 0.8);
-                    video.removeEventListener('seeked', onSeeked);
-                    resolve(dataURL);
+                    this.canvas.toBlob((blob) => {
+                        if (!blob) {
+                            reject(new Error('Не удалось создать blob изображения'));
+                            return;
+                        }
+                        resolve(blob);
+                    }, 'image/jpeg', 0.8);
                 } catch (error) {
-                    video.removeEventListener('seeked', onSeeked);
                     reject(error);
                 }
             };
             
-            video.addEventListener('seeked', onSeeked);
+            video.addEventListener('seeked', onSeeked, { once: true });
             video.currentTime = time;
         });
     }
 
-    displayScreenshots(columns, showTimestamps) {
-        const grid = document.getElementById('screenshotGrid');
+    displayScreenshots(columns) {
+        const grid = this.dom.screenshotGrid;
+        const fragment = document.createDocumentFragment();
         
         grid.style.setProperty('--columns', columns);
-        grid.innerHTML = '';
+        grid.textContent = '';
         
         this.screenshots.forEach((screenshot, index) => {
             const item = document.createElement('div');
             item.className = 'screenshot-item';
             
             const img = document.createElement('img');
-            img.src = screenshot.image;
+            img.src = screenshot.url;
             img.alt = `Кадр ${index + 1}`;
             img.loading = 'lazy';
+            img.decoding = 'async';
+            img.width = this.captureWidth;
+            img.height = this.captureHeight;
             
             item.appendChild(img);
-            
-            // Убираем отдельную временную метку, так как она теперь встроена в изображение
-            
-            grid.appendChild(item);
+            fragment.appendChild(item);
         });
+
+        grid.appendChild(fragment);
         
-        document.getElementById('previewSection').style.display = 'block';
+        this.dom.previewSection.style.display = 'block';
     }
 
     updateGridWidth(width) {
@@ -275,9 +321,8 @@ class VideoScreenshotGenerator {
             return;
         }
         
-        const columns = parseInt(document.getElementById('columns').value);
-        const showTimestamps = document.getElementById('showTimestamps').checked;
-        const gridWidth = parseInt(document.getElementById('gridWidth').value);
+        const columns = parseInt(this.dom.columns.value);
+        const gridWidth = parseInt(this.dom.gridWidth.value);
         
         // Создать большой canvas для всех скриншотов
         const downloadCanvas = document.createElement('canvas');
@@ -341,19 +386,22 @@ class VideoScreenshotGenerator {
             const x = padding + col * (screenshotWidth + gap);
             const y = headerHeight + padding + row * (itemHeight + gap);
             
-            // Загрузить изображение
-            const img = new Image();
-            await new Promise((resolve) => {
-                img.onload = resolve;
-                img.src = this.screenshots[i].image;
-            });
-            
-            // Отрисовать скриншот (временная метка уже встроена в изображение)
-            downloadCtx.drawImage(img, x, y, screenshotWidth, screenshotHeight);
+            await this.drawBlobToCanvas(
+                downloadCtx,
+                this.screenshots[i].blob,
+                x,
+                y,
+                screenshotWidth,
+                screenshotHeight
+            );
         }
         
         // Скачать
         downloadCanvas.toBlob((blob) => {
+            if (!blob) {
+                alert('Не удалось сформировать файл для скачивания');
+                return;
+            }
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
@@ -366,45 +414,50 @@ class VideoScreenshotGenerator {
     }
 
     showProgress() {
-        document.getElementById('progressSection').style.display = 'block';
-        document.getElementById('generateBtn').disabled = true;
+        this.lastProgressDisplayed = -1;
+        this.dom.progressSection.style.display = 'block';
+        this.dom.generateBtn.disabled = true;
         this.updateProgress(0);
     }
 
     updateProgress(percent) {
-        document.getElementById('progressFill').style.width = `${percent}%`;
-        document.getElementById('progressText').textContent = 
-            `Обработка видео... ${Math.round(percent)}%`;
+        const roundedPercent = Math.round(percent);
+        if (roundedPercent === this.lastProgressDisplayed) {
+            return;
+        }
+
+        this.lastProgressDisplayed = roundedPercent;
+        this.dom.progressFill.style.width = `${roundedPercent}%`;
+        this.dom.progressText.textContent = `Обработка видео... ${roundedPercent}%`;
     }
 
     hideProgress() {
-        document.getElementById('progressSection').style.display = 'none';
-        document.getElementById('generateBtn').disabled = false;
+        this.dom.progressSection.style.display = 'none';
+        this.dom.generateBtn.disabled = false;
     }
 
     reset() {
         try {
             // Скрыть все секции кроме загрузки
-            const controlsSection = document.getElementById('controlsSection');
-            const previewSection = document.getElementById('previewSection');
-            const progressSection = document.getElementById('progressSection');
-            const uploadArea = document.getElementById('uploadArea');
-            
-            if (controlsSection) controlsSection.style.display = 'none';
-            if (previewSection) previewSection.style.display = 'none';
-            if (progressSection) progressSection.style.display = 'none';
-            if (uploadArea) uploadArea.style.display = 'block';
+            if (this.dom.controlsSection) this.dom.controlsSection.style.display = 'none';
+            if (this.dom.previewSection) this.dom.previewSection.style.display = 'none';
+            if (this.dom.progressSection) this.dom.progressSection.style.display = 'none';
+            if (this.dom.uploadArea) this.dom.uploadArea.style.display = 'block';
+            if (this.dom.screenshotGrid) this.dom.screenshotGrid.textContent = '';
             
             // Очистить данные
             this.currentVideoFile = null;
-            this.screenshots = [];
+            this.cleanupScreenshotResources();
             
-            const videoInput = document.getElementById('videoInput');
-            if (videoInput) videoInput.value = '';
+            if (this.dom.videoInput) this.dom.videoInput.value = '';
             
             // Освободить память
+            if (this.currentVideoUrl) {
+                URL.revokeObjectURL(this.currentVideoUrl);
+                this.currentVideoUrl = null;
+            }
+
             if (this.video && this.video.src && this.video.src.startsWith('blob:')) {
-                URL.revokeObjectURL(this.video.src);
                 this.video.src = '';
             }
             
@@ -416,9 +469,58 @@ class VideoScreenshotGenerator {
         } catch (error) {
             console.error('Ошибка при сбросе:', error);
             // Принудительно показать область загрузки даже при ошибке
-            const uploadArea = document.getElementById('uploadArea');
-            if (uploadArea) uploadArea.style.display = 'block';
+            if (this.dom.uploadArea) this.dom.uploadArea.style.display = 'block';
         }
+    }
+
+    cleanupScreenshotResources() {
+        for (const screenshot of this.screenshots) {
+            if (screenshot.url && screenshot.url.startsWith('blob:')) {
+                URL.revokeObjectURL(screenshot.url);
+            }
+        }
+        this.screenshots = [];
+    }
+
+    getCaptureDimensions(columns) {
+        const gridWidth = parseInt(this.dom.gridWidth.value);
+        const padding = 10;
+        const gap = 2;
+        const previewWidth = 400;
+        const availableWidth = gridWidth - 2 * padding - (columns - 1) * gap;
+        const exportWidth = Math.max(1, Math.ceil(availableWidth / columns));
+        const baseWidth = Math.max(previewWidth, exportWidth);
+        const width = Math.max(
+            1,
+            Math.min(this.video.videoWidth, this.MAX_CAPTURE_WIDTH, baseWidth)
+        );
+        const height = Math.max(
+            1,
+            Math.round((width / this.video.videoWidth) * this.video.videoHeight)
+        );
+        return { width, height };
+    }
+
+    async drawBlobToCanvas(ctx, blob, x, y, width, height) {
+        if ('createImageBitmap' in window) {
+            const imageBitmap = await createImageBitmap(blob);
+            ctx.drawImage(imageBitmap, x, y, width, height);
+            imageBitmap.close();
+            return;
+        }
+
+        const img = new Image();
+        await new Promise((resolve, reject) => {
+            img.onload = resolve;
+            img.onerror = reject;
+            img.src = URL.createObjectURL(blob);
+        });
+        ctx.drawImage(img, x, y, width, height);
+        URL.revokeObjectURL(img.src);
+    }
+
+    yieldToMainThread() {
+        return new Promise((resolve) => requestAnimationFrame(resolve));
     }
 
     formatTime(seconds) {
